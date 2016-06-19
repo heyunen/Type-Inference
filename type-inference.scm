@@ -100,7 +100,6 @@
                    . ,g)
                  body t))))
 
-
 (define !-
   (extend-relation (a1 a2 a3)
                    var-rel int-rel bool-rel zero?-rel sub1-rel +-rel 
