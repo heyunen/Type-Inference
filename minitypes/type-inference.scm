@@ -96,10 +96,8 @@
              (!- `((,v generic ,(relation (head-let t-rand)
                                           (all!!
                                            (!- g rand t-rand)
-                                           (trace-vars 'poly-let (t-rand rand)))))
-                   . ,g)
+                                           (trace-vars 'poly-let (t-rand rand))))) . ,g)
                  body t))))
-
 
 (define !-
   (extend-relation (a1 a2 a3)
