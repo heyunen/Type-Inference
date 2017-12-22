@@ -23,7 +23,7 @@ apply s (TFun t1 t2) = TFun (apply s t1) (apply s t2)
 apply s t = t
 
 composeSubst :: Subst -> Subst -> Subst
-composeSubst s1 s2 = Map.union (Map.map (apply s2) s1) s2
+composeSubst s1 s2 = Map.union (Map.map (apply s2) s1) s1
 
 -- tests
 test1 = 
