@@ -107,16 +107,15 @@
 (define (lookup-subst subst target)
   (define (helper sub-subst target)
     (cond
-      [(null? sub-subst) '()]
       [(eq? (car sub-subst) (tyvar-name target)) sub-subst]
-      [else (helper (cdr sub-subst) target)]))
+      [else '()]))
   (cond
     [(null? subst) '()]
     [else (letv* ([x (car subst)]
                   [xs (cdr subst)]
                   [r (helper x target)])
                  (if (null? r)
-                     (helper xs target)
+                     (lookup-subst xs target)
                      (cadr r)))]))
 
 
@@ -127,7 +126,8 @@
            (format "~a: ~a" symbol (type->string type)))) subst))
 
 
-; (print (type->string (lookup-subst (make-Subst 'X (make-const 'Bool)) (make-tyvar 'X))))
+; (type->string (lookup-subst (make-Subst 'X (make-const 'Bool)) (make-tyvar 'X)))
+; (type->string (lookup-subst (list (list 'X (make-tyvar 'Y)) (list 'Z (make-tyvar 'V))) (make-tyvar 'Z)))
 
 
 ; apply-subst/type : Subst Type -> Type
@@ -156,6 +156,8 @@
 ; apply δ to the type X -> X
 ; δ(X -> X) = Bool -> Bool
 ; (type->string (apply-subst/type (make-Subst 'X (make-const 'Bool)) (make-arrow (make-tyvar 'X) (make-tyvar 'X))))
+
+;(type->string (apply-subst/type (list (list 'α1 (make-tyvar 'β)) (list 'β (make-tyvar 'α2))) (make-tyvar 'β)))
 
 
 ; apply-subst/scheme : Subst TypeScheme -> TypeScheme
@@ -205,7 +207,11 @@
                       (not (mem_assoc symbol sub2)))) sub1)))
 
 
-(Subst->string (compose-subst (list (list 'α (make-arrow (make-tyvar 'α1) (make-tyvar 'α2))) (list 'β (make-tyvar 'τ)))
-                              (list (list 'α1 (make-tyvar 'β)) (list 'β (make-tyvar 'α2)))))
+; ("α: [α1 -> α2]" "β: τ")
+; ("α1: β" "β: α2")
+;(Subst->string (compose-subst (list (list 'α (make-arrow (make-tyvar 'α1) (make-tyvar 'α2))) (list 'β (make-tyvar 'τ)))
+;                              (list (list 'α1 (make-tyvar 'β)) (list 'β (make-tyvar 'α2)))))
+
+
                              
 
