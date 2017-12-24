@@ -22,9 +22,9 @@ apply s (TVar n) = case Map.lookup n s of
 apply s (TFun t1 t2) = TFun (apply s t1) (apply s t2)
 apply s t = t
 
-composeSubst :: Subst -> Subst -> Subst
-composeSubst s1 s2 = Map.union (Map.map (apply s2) s1) s2
--- composeSubst s1 s2 = Map.union (Map.map (apply s1) s2) s1 (wrong !!!)
+composeSubst :: Subst -> Subst -> Subst 
+composeSubst s1 s2 = Map.union (Map.map (apply s1) s2) s1
+
 
 -- tests
 test1 = 
@@ -42,8 +42,8 @@ test2 =
 		putStrLn $ "S1: " ++ show s1
 		putStrLn $ "S2: " ++ show s2
 		putStrLn $ "compose S1 and S2: " ++ show (composeSubst s1 s2)
-		
-		
+
+
 -- Pretty-priinting
 instance Show Type where
 	showsPrec _ x = shows (prType x)
