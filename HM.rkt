@@ -25,7 +25,8 @@
 
 ; A [Pair X Y] is a (make-pair X Y)
 (define-struct pair (fst snd))
- 
+
+
 ; remove-duplicates : [List X] -> [List X]
 ; removes all but the last copy of any duplicates in a list
 (define (remove-duplicates lst)
@@ -162,7 +163,8 @@
 ; but does *not* rewrite the type variables that are bound by the scheme itself
 (define (apply-subst/scheme subst scm)
   (make-scheme (scheme-vars scm) (apply-subst/type subst (scheme-type scm))))
- 
+
+
 ; (scheme->string (apply-subst/scheme (make-Subst 'X (make-const 'Bool)) (make-scheme '(X) (make-arrow (make-tyvar 'X) (make-tyvar 'X)))))
 
 
@@ -176,6 +178,7 @@
 
 
 ; (TypeEnv->string (apply-subst/env (make-Subst 'X (make-const 'Bool)) (make-TypeEnv 'X (make-scheme '(X) (make-arrow (make-tyvar 'X) (make-tyvar 'X))))))
+
 
 ; apply-subst/subst : Subst Subst -> Subst
 ; Rewrites all the types in the second substitution, using definitions from the first substitution
