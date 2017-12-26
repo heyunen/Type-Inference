@@ -262,7 +262,6 @@
 ; (map type->string (ftv/scheme (make-scheme '(X) (make-arrow (make-tyvar 'X) (make-tyvar 'X)))))
 
 
-
 ; ftv/env, which will compute all of the free type variables in a TypeEnv.
 ; Note that the symbols in the TypeEnv just give types to named terms,
 ; and those names have nothing to do with the free type variables in an environment.
@@ -303,13 +302,8 @@
 
 
 ; (unify (make-const 'Number) (make-const 'Boolean))
-
-
 ; (unify (make-arrow (make-tyvar 'A) (make-const 'Number)) (make-arrow (make-const 'Boolean) (make-tyvar 'A)))
-
-
 ; (unify (make-const 'Oops) (make-arrow (make-tyvar 'X) (make-tyvar 'Y)))
-
 
 ; (A -> B) -> C
 ; D -> E
