@@ -1,171 +1,316 @@
 #lang scheme
 
-(require "pmatch.rkt")
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; utilities
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Core miniKanren
-
-(define-syntax var
+(define-syntax letv*
   (syntax-rules ()
-    ((_ x) (vector x))))
+    [(_ () body ...) (begin body ...)]
+    [(_ ([(x0 ...) v0] [x1 v1] ...) body ...)
+     (let-values ([(x0 ...) v0])
+       (letv* ([x1 v1] ...) body ...))]
+    [(_ ([x0 v0] [x1 v1] ...) body ...)
+     (letv* ([(x0) v0] [x1 v1] ...) body ...)]))
 
-(define-syntax var?
-  (syntax-rules ()
-    ((_ x) (vector? x))))
 
-(define empty-s '())
+; mem_assoc : 'a -> ('a * 'b) list -> bool
+; Same as List.assoc, but simply return true if a binding exists, and false if no bindings exist for the given key.
+(define (mem_assoc v list)
+  (if (assoc v list) #t #f))
 
-(define ext-s-no-check
-  (lambda (x v s)
-    (cons `(,x . ,v) s)))
 
-(define walk
-  (lambda (v s)
+; mem : 'a -> 'a list -> bool
+; mem a l is true if and only if a is equal to an element of l.
+(define (mem v list)
+  (if (member v list) #t #f))
+
+
+(define (union a b)
+  (cond ((null? b) a)
+        ((member (car b) a)
+         (union a (cdr b)))
+        (else (union (cons (car b) a) (cdr b)))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Hindley-Milner type inference
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; A [Pair X Y] is a (make-pair X Y)
+(define-struct pair (fst snd))
+
+
+; remove-duplicates : [List X] -> [List X]
+; removes all but the last copy of any duplicates in a list
+(define (remove-duplicates lst)
+  (cond
+    [(empty? lst) lst]
+    [(member (first lst) (rest lst)) (remove-duplicates (rest lst))]
+    [else (cons (first lst) (remove-duplicates (rest lst)))]))
+ 
+
+; A Husky expression (HExp) is one of:
+; – Boolean                           – booleans
+; – Number                            – numbers
+; – Ident                             – identifiers
+; – (list 'if HExp HExp HExp)         – if expressions
+; – (list 'fun Ident HExp)            – lambdas
+; – (list HExp HExp)                  – function applications
+; An Ident is a Symbol other than 'if, or 'fun
+
+
+; A Type is one of
+; – (make-const Symbol) – named types, like Number or Boolean
+; – (make-arrow Type Type) – a one-argument arrow type, like [X -> Y]
+; – (make-tyvar Symbol) – a type variable, like X
+(define-struct const (name))
+(define-struct arrow (arg ret))
+(define-struct tyvar (name))
+
+
+; type->string : Type -> String
+; Outputs the type as an easily-readable string
+(define (type->string type)
+  (cond
+    [(const? type) (format "~a" (const-name type))]
+    [(tyvar? type) (format "~a" (tyvar-name type))]
+    [(arrow? type) (format "[~a -> ~a]" (type->string (arrow-arg type)) (type->string (arrow-ret type)))]))
+
+
+; A TypeScheme is a (make-scheme [Listof Symbol] Type)
+; and is a polymorphic type of the form "Forall X, Y, Z, <some type>"
+; Technically, the "type" [X -> X] is not well-formed, because X isn't defined
+; but the type scheme "Forall X, [X -> X]" is well-formed.
+(define-struct scheme (vars type))
+
+
+; scheme->string : TypeScheme -> String
+; Outputs a readable version of a TypeScheme
+(define (scheme->string scm)
+  (format "Forall ~a, ~a"
+          (foldr (λ (s1 s2) (if (string=? s2 "")
+                                s1
+                                (string-append s1 ", " s2)))
+                 ""
+                 (map symbol->string (scheme-vars scm)))
+          (type->string (scheme-type scm))))
+
+
+; A TypeEnv is a [List (list Symbol Scheme)]
+; A type environment records the (polymorphic) types for predefined functions, or
+; the types of function parameters available in the bodies of functions
+(define (make-TypeEnv symbol scheme)
+  (list (list symbol scheme)))
+
+
+(define (TypeEnv->string scm)
+  (map (lambda (s)
+         (let ([symbol (car s)]
+               [scheme (cadr s)])
+           (format "~a: ~a" symbol (scheme->string scheme)))) scm))
+
+
+; A Subst is a [List (list Symbol Type)]
+; This is where we keep track of all the type equations we build up while running
+; type inference (aka "code detective")
+(define (make-Subst symbol type)
+  (list (list symbol type)))
+
+
+(define nullSubst '())
+
+
+(define (lookup-subst subst target)
+  (define (helper sub-subst target)
     (cond
-      [(var? v)
-       (let [(a (assq v s))]
-         (cond
-           [a (walk (cdr a) s)]
-           [else v]))]
-      [else v])))
+      [(eq? (car sub-subst) (tyvar-name target)) sub-subst]
+      [else '()]))
+  (cond
+    [(null? subst) '()]
+    [else (letv* ([x (car subst)]
+                  [xs (cdr subst)]
+                  [r (helper x target)])
+                 (if (null? r)
+                     (lookup-subst xs target)
+                     (cadr r)))]))
 
-(define ext-s
-  (lambda (x v s)
+
+(define (Subst->string subst)
+  (map (lambda (s)
+         (let ([symbol (car s)]
+               [type (cadr s)])
+           (format "~a: ~a" symbol (type->string type)))) subst))
+
+
+; (type->string (lookup-subst (make-Subst 'X (make-const 'Bool)) (make-tyvar 'X)))
+; (type->string (lookup-subst (list (list 'X (make-tyvar 'Y)) (list 'Z (make-tyvar 'V))) (make-tyvar 'Z)))
+
+
+; apply-subst/type : Subst Type -> Type
+; Rewrites all types in the given type based on the definitions we have in the substitution
+(define (apply-subst/type subst type)
+  (cond
+    [(const? type) type]
+    [(tyvar? type) (let ([r (lookup-subst subst type)])
+                     (if (null? r) type r))]
+    [(arrow? type) (make-arrow (apply-subst/type subst (arrow-arg type)) (apply-subst/type subst (arrow-ret type)))]))
+
+
+; a substitution δ = [X := Y]
+; apply δ to the type X
+; δ(X) = Y
+; (type->string (apply-subst/type (make-Subst 'X (make-tyvar 'Y)) (make-tyvar 'X)))
+
+
+; a substitution δ = [X := Y]
+; apply δ to the type Z
+; δ(X) = Z
+; (type->string (apply-subst/type (make-Subst 'X (make-tyvar 'Y)) (make-tyvar 'Z)))
+
+
+; a substitution δ = [X -> Bool]
+; apply δ to the type X -> X
+; δ(X -> X) = Bool -> Bool
+; (type->string (apply-subst/type (make-Subst 'X (make-const 'Bool)) (make-arrow (make-tyvar 'X) (make-tyvar 'X))))
+
+; (type->string (apply-subst/type (list (list 'α1 (make-tyvar 'β)) (list 'β (make-tyvar 'α2))) (make-tyvar 'β)))
+
+
+; apply-subst/scheme : Subst TypeScheme -> TypeScheme
+; Rewrites all the types inside the given type scheme based on the substitution
+; but does *not* rewrite the type variables that are bound by the scheme itself
+(define (apply-subst/scheme subst scm)
+  (make-scheme (scheme-vars scm) (apply-subst/type subst (scheme-type scm))))
+
+
+; (scheme->string (apply-subst/scheme (make-Subst 'X (make-const 'Bool)) (make-scheme '(X) (make-arrow (make-tyvar 'X) (make-tyvar 'X)))))
+
+
+; apply-subst/env : Subst TypeEnv -> TypeEnv
+; Rewrites all the types in the type environment
+(define (apply-subst/env subst tenv)
+  (map (lambda (t)
+         (let ([symbol (car t)]
+               [scheme (cadr t)])
+           (list symbol (apply-subst/scheme subst scheme)))) tenv))
+
+
+; (TypeEnv->string (apply-subst/env (make-Subst 'X (make-const 'Bool)) (make-TypeEnv 'X (make-scheme '(X) (make-arrow (make-tyvar 'X) (make-tyvar 'X))))))
+
+
+; apply-subst/subst : Subst Subst -> Subst
+; Rewrites all the types in the second substitution, using definitions from the first substitution
+(define (apply-subst/subst subst1 subst2) '())
+
+
+; compose-subst : Subst Subst -> Subst
+; Combines two substitutions into one:
+; first by applying the first substitution to the second,
+; and then just appending that to the first
+
+; s1 is any substitution in sub1
+; s2 is any substitution in sub2
+; if s2 associates symbol with type, then apply sub1 to type.
+; if s1 associates symbol with type and symbol is not in the domain of sub2, then use s1.
+(define (compose-subst sub1 sub2)
+  (append (map (lambda (s)
+                 (let ([symbol (car s)]
+                       [type (cadr s)])
+                   (list symbol (apply-subst/type sub1 type)))) sub2)
+          (filter (lambda (s)
+                    (let ([symbol (car s)]
+                          [type (cadr s)])
+                      (not (mem_assoc symbol sub2)))) sub1)))
+
+
+; ("α: [α1 -> α2]" "β: τ")
+; ("α1: β" "β: α2")
+; (Subst->string (compose-subst (list (list 'α (make-arrow (make-tyvar 'α1) (make-tyvar 'α2))) (list 'β (make-tyvar 'τ)))
+;                               (list (list 'α1 (make-tyvar 'β)) (list 'β (make-tyvar 'α2)))))
+
+
+; ftv/type : Type -> [List Type]
+; ftv/type, which will take in a Type and output all of the free type variables in it.
+(define (ftv/type type)
+  (cond
+    [(const? type) '()]
+    [(tyvar? type) (list type)]
+    [(arrow? type) (union (ftv/type (arrow-arg type)) (ftv/type (arrow-ret type)))]))
+
+
+; (map type->string (ftv/type (make-arrow (make-tyvar 'α1) (make-tyvar 'α2))))
+
+
+; occurs? : Symbol -> Type -> Bool
+; occurs?, which will take in a Symbol and a Type and determine if it occurs in the free type variables of the type.
+(define (occurs? symbol type)
+  (define (helper ftv-lst)
     (cond
-      ((occurs x v s) #f)
-      (else (ext-s-no-check x v s)))))
+      [(null? ftv-lst) #f]
+      [(eq? (tyvar-name (car ftv-lst)) symbol) #t]
+      [else (helper (cdr ftv-lst))]))
+  (helper (ftv/type type)))
 
-(define occurs
-  (lambda (x v s)
-    (let ((v (walk v s)))
-      (cond
-        ((var? v) (eq? v x))
-        ((pair? v) (or (occurs x (car v) s) (occurs x (cdr v) s)))
-        (else #f)))))
 
-(define unify
-  (lambda (u v s)
-    (let ((u (walk u s))
-          (v (walk v s)))
-      (cond
-        ((eq? u v) s)
-        ((var? u)
-         (cond
-           ((var? v) (ext-s-no-check u v s))
-           (else (ext-s u v s))))
-        ((var? v) (ext-s v u s))
-        ((and (pair? u) (pair? v))
-         (let ((s (unify (car u) (car v) s)))
-           (and s (unify (cdr u) (cdr v) s))))
-        ((equal? u v) s)
-        (else #f)))))
+; ftv/scheme : TypeScheme -> [List Type]
+; ftv/scheme, which will take in a TypeScheme and output all of the free type variables in its type that are not bound by the scheme’s variables.
+(define (ftv/scheme scheme)
+  (filter (lambda (type)
+            (not (mem (tyvar-name type) (scheme-vars scheme)))) (ftv/type (scheme-type scheme))))
 
-; In an idempotent substitution,
-; a variable that appears on the left-hand-side of an association never appears on the rhs.
+; (map type->string (ftv/scheme (make-scheme '(X) (make-arrow (make-tyvar 'X) (make-tyvar 'X)))))
 
-(define reify
-  (lambda (x s)
-    (car (reify-s x 0 s))))
 
-(define reify-s
-  (lambda (x n s)
-    (let ((x (walk x s)))
-      (cond
-        ((var? x) (let ([v^ (reify-name n)])
-                    (list v^ (add1 n) (ext-s x v^ s))))
-        ((pair? x) (let* ([r (reify-s (car x) n s)]
-                          [u (list-ref r 0)]
-                          [n1 (list-ref r 1)]
-                          [s1 (list-ref r 2)]
-                          [r^ (reify-s (cdr x) n1 s1)]
-                          [v (list-ref r^ 0)]
-                          [n2 (list-ref r^ 1)]
-                          [s2 (list-ref r^ 2)])
-                     (list (cons u v) n2 s2)))
-        (else (list x n s))))))
 
-(define reify-name
-  (lambda (n)
-    (string->symbol
-     (string-append "t" (number->string n)))))
+; ftv/env, which will compute all of the free type variables in a TypeEnv.
+; Note that the symbols in the TypeEnv just give types to named terms,
+; and those names have nothing to do with the free type variables in an environment.
+(define (ftv/env tenv)
+  '())
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Environment
 
-(define ext-env
-  (lambda (x v s) `((,x . ,v) . ,s)))
+; binding : Symbol -> Type -> Subst
+; the function bind, which will take in a Symbol and Type,
+; and will make a Subst binding the type that symbol.
+(define (binding symbol type)
+  (cond
+    [(and (tyvar? type) (eq? (tyvar-name type) symbol)) nullSubst]
+    [(occurs? symbol type) '(error (format "Infinite types: ~a and ~a" binding (type->string type)))]
+    [else (make-Subst symbol type)]))
 
-(define lookup
-  (lambda (x env)
-    (let ((slot (assq x env)))
-      (cond 
-       [(not slot) (error 'lookup "unbound variable ~a" x)]
-       [else (cdr slot)]))))
 
-(define env0
-  `((zero? . (int -> bool))
-    (add1  . (int -> int))
-    (sub1  . (int -> int))
-    (=     . (int -> (int -> bool)))
-    (<=    . (int -> (int -> bool)))
-    (<     . (int -> (int -> bool)))
-    (>=    . (int -> (int -> bool)))
-    (>     . (int -> (int -> bool)))
-    (*     . (int -> (int -> int)))
-    (-     . (int -> (int -> int)))
-    (+     . (int -> (int -> int)))))
+; (binding 'X (make-tyvar 'X))
+; (binding 'X (make-arrow (make-tyvar 'X) (make-tyvar 'Y)))
+; (Subst->string (binding 'X (make-tyvar 'Y)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Inferencer
 
-(define infer
-  (lambda (exp)
-    (define infer1
-      (lambda (exp env s)
-        (pmatch exp
-                [`,x (guard (number? x)) (cons 'int s)]
-                [`,x (guard (boolean? x)) (cons 'bool s)]
-                [`,x (guard (string? x)) (cons 'string s)]
-                [`,x (guard (symbol? x)) (cons (lookup x env) s)]
-                [`(lambda (,x) ,body) (let* ([t1 (var x)]
-                                             [env^ (ext-env x t1 env)]
-                                             [r (infer1 body env^ s)]
-                                             [t2 (car r)]
-                                             [s^ (cdr r)])
-                                        (cons `(,t1 -> ,t2) s^))]
-                [`(,e1 ,e2) (let* ([r (infer1 e1 env s)]
-                                   [t1 (car r)]
-                                   [s1 (cdr r)]
-                                   [r^ (infer1 e2 env s1)]
-                                   [t2 (car r^)]
-                                   [s2 (cdr r^)]
-                                   [t3 (var 't3)]
-                                   [t4 (var 't4)]
-                                   [s3 (unify t1 `(,t3 -> ,t4) s2)])
-                              (cond
-                                [(not s3) `error]
-                                [else
-                                 (let ([s4 (unify t2 t3 s3)])
-                                   (cond
-                                     [(not s4) `error]
-                                     [else (cons t4 s4)]))]))]
-                )))
-    (let* ([r (infer1 exp env0 empty-s)]
-           [t (car r)]
-           [s (cdr r)])
-      (reify t s))))
+; unify : Type -> Type -> Subst
+; the function unify, which will take in two Types and will determine whether or not the types are compatible.
+; In other words, it will output a Subst, if possible, that will bind the free type variables inside the types so that they become identical.
+(define (unify t1 t2)
+  (cond
+    [(tyvar? t1) (make-Subst (tyvar-name t1) t2)]
+    [(tyvar? t2) (make-Subst (tyvar-name t2) t1)]
+    [(and (const? t1) (const? t2)) (if (eq? (const-name t1) (const-name t2))
+                                       nullSubst
+                                       (error (format "Incompatible type constants: ~a and ~a" (type->string t1) (type->string t2))))]
+    [(and (arrow? t1) (arrow? t2)) (letv*
+                                    ([s1 (unify (arrow-arg t1) (arrow-arg t2))]
+                                     [s2 (unify (apply-subst/type s1 (arrow-ret t1)) (apply-subst/type s1 (arrow-ret t2)))])
+                                    (compose-subst s1 s2))]
+    [else (error (format "Incompatible types: ~a and ~a" (type->string t1) (type->string t2)))]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Tests
 
-(infer 1)
-; => int
+; (unify (make-const 'Number) (make-const 'Boolean))
 
-(infer #t)
-; => bool
 
-(infer '(lambda (v) v))
-; => (t0 -> t0)
+; (unify (make-arrow (make-tyvar 'A) (make-const 'Number)) (make-arrow (make-const 'Boolean) (make-tyvar 'A)))
 
-(infer '(lambda (f) (lambda (x) (f x))))
-; => ((t0 -> t1) -> (t0 -> t1))
+
+; (unify (make-const 'Oops) (make-arrow (make-tyvar 'X) (make-tyvar 'Y)))
+
+
+; (A -> B) -> C
+; D -> E
+; (Subst->string (unify (make-arrow (make-arrow (make-tyvar 'A) (make-tyvar 'B)) (make-tyvar 'C)) (make-arrow (make-tyvar 'D) (make-tyvar 'E))))
