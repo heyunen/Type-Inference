@@ -445,7 +445,6 @@
 (test (infer-type '() '((fun (f) (fun (x) (f (f x))))
          (fun (f) (fun (x) (f (f x)))))))
 
-
 (test (infer-type '() '(fun (x) (x 1))))
 
 ;; compose
