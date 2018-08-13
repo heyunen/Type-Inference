@@ -399,7 +399,7 @@
 
 
 (define (rename-vars/scheme scheme)
-  (local ((define ftvs  (foldr (lambda (x y) (cons (tyvar-name x) y)) '() (ftv/type (scheme-type scheme))))
+  (local ((define ftvs  (foldl (lambda (x y) (cons (tyvar-name x) y)) '() (ftv/type (scheme-type scheme))))
           (define new-vars (build-list (length ftvs) (lambda (n) (make-tyvar (string->symbol (format "X~a" n))))))
           (define subst (zip ftvs new-vars)))
     (make-scheme (map tyvar-name new-vars)
@@ -437,3 +437,4 @@
 
 (test (infer-type '() '(fun (g) (fun (f) (fun (x) (g (f x)))))))
 
+(test (infer-type '() '(fun (x) (fun (y) (fun (z) ((x z) (y z)))))))
