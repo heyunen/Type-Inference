@@ -429,12 +429,24 @@
 
 
 
+;; I
 (test (infer-type '() '(fun (x) x)))
 
-(test (infer-type '() '(fun (f) (fun (x) (f x)))))
+;; K
+(test (infer-type '() '(fun (x) (fun (y) x))))
 
+;; S
+(test (infer-type '() '(fun (x) (fun (y) (fun (z) ((x z) (y z)))))))
+
+;; 2
 (test (infer-type '() '(fun (f) (fun (x) (f (f x))))))
 
-(test (infer-type '() '(fun (g) (fun (f) (fun (x) (g (f x)))))))
+;; 2 * 2
+(test (infer-type '() '((fun (f) (fun (x) (f (f x))))
+         (fun (f) (fun (x) (f (f x)))))))
 
-(test (infer-type '() '(fun (x) (fun (y) (fun (z) ((x z) (y z)))))))
+
+(test (infer-type '() '(fun (x) (x 1))))
+
+;; compose
+(test (infer-type '() '(fun (g) (fun (f) (fun (x) (g (f x)))))))
